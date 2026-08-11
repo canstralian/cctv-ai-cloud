@@ -1,0 +1,37 @@
+services:
+  api:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./api:/app
+    command: sh -c "pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./web:/app
+    command: sh -c "npm install && npm run dev -- --host"
+    ports:
+      - "5173:5173"
+
+  ml:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./ml:/app
+      - ./models:/models
+    command: sh -c "pip install -r requirements.txt && tail -f /dev/null"
+
+  nvr:
+    image: ghcr.io/blakeblackshear/frigate:stable
+    privileged: true
+    shm_size: "512mb"
+    ports:
+      - "5000:5000"
+      - "8554:8554"
+    volumes:
+      - ./data:/media/frigate
+      - ./nvr/config.yml:/config/config.yml
