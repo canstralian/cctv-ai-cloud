@@ -1,6 +1,5 @@
-from fastapi import FastAPI
-app = FastAPI(title="CCTV AI Cloud API")
+"""ASGI entrypoint: `uvicorn main:app`."""
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+from app.factory import create_app
+
+app = create_app()

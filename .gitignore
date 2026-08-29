@@ -6,3 +6,5 @@ models/*
 !models/.gitkeep
 data/*
 !data/.gitkeep
+.venv/
+.pytest_cache/
