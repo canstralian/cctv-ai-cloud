@@ -1,0 +1,10 @@
+{
+  "name": "tinkabot",
+  "version": "0.1.0",
+  "description": "Agent Plugin that wraps a public no-auth API with MCP tools and a skill playbook.",
+  "skills": [
+    "skills/fetch-public-todo.md"
+  ],
+  "mcp": "mcp.json",
+  "dataShapes": "schemas/data-shapes.schema.json"
+}
