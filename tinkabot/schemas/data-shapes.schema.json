@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/tinkabot/data-shapes.schema.json",
+  "title": "Tinkabot Core Data Shapes",
+  "type": "object",
+  "required": ["memories", "skills", "integrations"],
+  "properties": {
+    "memories": {
+      "type": "array",
+      "description": "Facts the bot already knows.",
+      "items": {
+        "type": "object",
+        "required": ["id", "topic", "fact", "confidence", "source", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "topic": { "type": "string", "minLength": 1 },
+          "fact": { "type": "string", "minLength": 1 },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "source": { "type": "string", "minLength": 1 },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "skills": {
+      "type": "array",
+      "description": "Playbooks the bot can run.",
+      "items": {
+        "type": "object",
+        "required": ["name", "goal", "inputs", "steps", "outputs"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "goal": { "type": "string", "minLength": 1 },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "type", "required"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "type": { "type": "string", "enum": ["string", "number", "boolean", "object", "array"] },
+                "required": { "type": "boolean" },
+                "description": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "minItems": 1
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "type", "description"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "type": { "type": "string", "enum": ["string", "number", "boolean", "object", "array"] },
+                "description": { "type": "string", "minLength": 1 }
+              },
+              "additionalProperties": false
+            },
+            "minItems": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "integrations": {
+      "type": "array",
+      "description": "Apps the bot can use.",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind", "baseUrl", "auth", "operations"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "enum": ["http_api", "database", "filesystem", "other"] },
+          "baseUrl": { "type": "string", "format": "uri" },
+          "auth": {
+            "type": "object",
+            "required": ["type", "envVar"],
+            "properties": {
+              "type": { "type": "string", "enum": ["none", "api_key", "oauth", "bearer_token"] },
+              "envVar": { "type": ["string", "null"] }
+            },
+            "additionalProperties": false
+          },
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "method", "path", "description"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+                "path": { "type": "string", "minLength": 1 },
+                "description": { "type": "string", "minLength": 1 }
+              },
+              "additionalProperties": false
+            },
+            "minItems": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
