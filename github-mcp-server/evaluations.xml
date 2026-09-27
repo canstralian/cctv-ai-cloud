@@ -1,0 +1,53 @@
+<evaluation>
+  <!-- All questions are read-only and verified against the public canstralian/cctv-ai-cloud repo -->
+
+  <qa_pair>
+    <question>Using github_get_repo for canstralian/cctv-ai-cloud, what is the default branch of the repository?</question>
+    <answer>main</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Using github_get_file_contents to read the file at path 'docker-compose.yml' in canstralian/cctv-ai-cloud on the main branch, which port does the 'web' service expose on the host machine?</question>
+    <answer>5173</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Using github_get_file_contents to read 'nvr/config.yml' in canstralian/cctv-ai-cloud, what is the file content (is it empty or does it contain configuration)?</question>
+    <answer>empty</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Using github_list_branches for canstralian/cctv-ai-cloud, how many branches exist in total (combine all pages)?</question>
+    <answer>2</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Using github_get_file_contents for the path 'api/main.py' in canstralian/cctv-ai-cloud on the main branch, what web framework is imported in that file?</question>
+    <answer>FastAPI</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Using github_list_commits for canstralian/cctv-ai-cloud on branch 'main', what is the commit message of the very first (oldest, single) commit on the main branch?</question>
+    <answer>Initial scaffold: NVR + API + Web + ML stack</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Using github_get_file_contents to read 'ml/requirements.txt' in canstralian/cctv-ai-cloud on the main branch, is the file empty or does it list Python packages?</question>
+    <answer>empty</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Using github_search_repos with query 'repo:canstralian/cctv-ai-cloud', what is the programming language listed for this repository (or null if none is set)?</question>
+    <answer>null</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Using github_get_file_contents to read 'docker-compose.yml' in canstralian/cctv-ai-cloud, what Docker image is used for the 'nvr' service?</question>
+    <answer>ghcr.io/blakeblackshear/frigate:stable</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Using github_get_file_contents to list the directory '' (root) of canstralian/cctv-ai-cloud on the main branch, how many top-level items (files + directories) are listed?</question>
+    <answer>8</answer>
+  </qa_pair>
+</evaluation>
