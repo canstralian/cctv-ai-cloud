@@ -7,8 +7,8 @@ import logging
 from fastapi import APIRouter, Response, status
 
 from .. import __version__
-from ..deps import Config
 from ..db import closing_connection
+from ..deps import Config
 from ..schemas import Health, Readiness
 
 router = APIRouter(tags=["health"])
