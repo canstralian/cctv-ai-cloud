@@ -44,7 +44,9 @@ jobs:
           python -m pip install ruff bandit pip-audit
 
       - name: Ruff lint
-        run: python -m ruff check --extend-immutable-calls fastapi.Query .
+        # Rule configuration, including the flake8-bugbear immutable-call
+        # exemptions for FastAPI's Query/Depends markers, lives in api/ruff.toml.
+        run: python -m ruff check .
 
       - name: Ruff format check
         run: python -m ruff format --check .

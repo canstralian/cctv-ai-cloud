@@ -1,4 +1,9 @@
-"""Camera persistence."""
+"""Camera persistence.
+
+Rows are read with ``SELECT *`` and accessed by column name via
+``sqlite3.Row``, so the queries stay literal strings and adding a column
+cannot break the mapping functions below.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +11,13 @@ import sqlite3
 from typing import Any
 
 from ..schemas import CameraCreate, CameraUpdate, redact_stream_url, utc_now
-from . import iso, parse_iso
+from . import StorageError, iso, parse_iso, require_written_row
 
-_COLUMNS = (
-    "id, name, stream_url, location, enabled, detection_enabled, "
-    "created_at, updated_at"
+# Columns a PATCH is allowed to touch. `update()` checks every incoming column
+# against this set before it reaches the statement, so the only identifiers
+# that can ever be interpolated are the literals listed here.
+UPDATABLE_COLUMNS = frozenset(
+    {"name", "stream_url", "location", "enabled", "detection_enabled"}
 )
 
 
@@ -29,9 +36,7 @@ def row_to_camera(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def get(conn: sqlite3.Connection, camera_id: str) -> sqlite3.Row | None:
-    return conn.execute(
-        f"SELECT {_COLUMNS} FROM cameras WHERE id = ?", (camera_id,)
-    ).fetchone()
+    return conn.execute("SELECT * FROM cameras WHERE id = ?", (camera_id,)).fetchone()
 
 
 def exists(conn: sqlite3.Connection, camera_id: str) -> bool:
@@ -48,16 +53,20 @@ def list_page(
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[sqlite3.Row], int]:
-    where, params = "", []
-    if enabled is not None:
-        where = "WHERE enabled = ?"
-        params.append(int(enabled))
+    """One optional filter, so each variant is spelled out in full."""
+    if enabled is None:
+        count_sql = "SELECT COUNT(*) FROM cameras"
+        page_sql = "SELECT * FROM cameras ORDER BY id LIMIT ? OFFSET ?"
+        filters: list[Any] = []
+    else:
+        count_sql = "SELECT COUNT(*) FROM cameras WHERE enabled = ?"
+        page_sql = (
+            "SELECT * FROM cameras WHERE enabled = ? ORDER BY id LIMIT ? OFFSET ?"
+        )
+        filters = [int(enabled)]
 
-    total = conn.execute(f"SELECT COUNT(*) FROM cameras {where}", params).fetchone()[0]
-    rows = conn.execute(
-        f"SELECT {_COLUMNS} FROM cameras {where} ORDER BY id LIMIT ? OFFSET ?",
-        [*params, limit, offset],
-    ).fetchall()
+    total = conn.execute(count_sql, filters).fetchone()[0]
+    rows = conn.execute(page_sql, [*filters, limit, offset]).fetchall()
     return rows, total
 
 
@@ -81,9 +90,7 @@ def create(conn: sqlite3.Connection, payload: CameraCreate) -> sqlite3.Row:
             now,
         ),
     )
-    row = get(conn, payload.id)
-    assert row is not None  # just inserted inside the same transaction
-    return row
+    return require_written_row(get(conn, payload.id), f"Camera {payload.id!r}")
 
 
 def update(
@@ -93,8 +100,11 @@ def update(
     if not changes:
         return get(conn, camera_id)
 
-    assignments, params = [], []
+    assignments: list[str] = []
+    params: list[Any] = []
     for column, value in changes.items():
+        if column not in UPDATABLE_COLUMNS:
+            raise StorageError(f"column {column!r} is not updatable")
         assignments.append(f"{column} = ?")
         params.append(int(value) if isinstance(value, bool) else value)
 
@@ -102,10 +112,11 @@ def update(
     params.append(iso(utc_now()))
     params.append(camera_id)
 
-    cursor = conn.execute(
-        f"UPDATE cameras SET {', '.join(assignments)} WHERE id = ?", params
-    )
-    if cursor.rowcount == 0:
+    # `assignments` holds only literals drawn from UPDATABLE_COLUMNS, checked
+    # in the loop above; every value is a bound parameter.
+    statement = f"UPDATE cameras SET {', '.join(assignments)} WHERE id = ?"  # nosec B608
+
+    if conn.execute(statement, params).rowcount == 0:
         return None
     return get(conn, camera_id)
 

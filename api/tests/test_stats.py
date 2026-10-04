@@ -25,8 +25,12 @@ def test_stats_aggregate_cameras_and_events(
             "enabled": False,
         },
     )
-    client.post("/api/v1/events", headers=write_headers, json=make_event(label="person"))
-    client.post("/api/v1/events", headers=write_headers, json=make_event(label="person"))
+    client.post(
+        "/api/v1/events", headers=write_headers, json=make_event(label="person")
+    )
+    client.post(
+        "/api/v1/events", headers=write_headers, json=make_event(label="person")
+    )
     client.post("/api/v1/events", headers=write_headers, json=make_event(label="car"))
 
     body = client.get("/api/v1/stats", headers=read_headers).json()
@@ -44,9 +48,13 @@ def test_events_older_than_a_day_are_excluded_from_the_24h_count(
     client: TestClient, write_headers: dict, read_headers: dict, camera: dict
 ) -> None:
     client.post(
-        "/api/v1/events", headers=write_headers, json=make_event(minutes_ago=2 * 24 * 60)
+        "/api/v1/events",
+        headers=write_headers,
+        json=make_event(minutes_ago=2 * 24 * 60),
     )
-    client.post("/api/v1/events", headers=write_headers, json=make_event(minutes_ago=10))
+    client.post(
+        "/api/v1/events", headers=write_headers, json=make_event(minutes_ago=10)
+    )
 
     body = client.get("/api/v1/stats", headers=read_headers).json()
 

@@ -109,7 +109,9 @@ def test_filter_by_camera_and_label(
         headers=write_headers,
         json={"id": "garage", "name": "Garage", "stream_url": "rtsp://host/s"},
     )
-    client.post("/api/v1/events", headers=write_headers, json=make_event(label="person"))
+    client.post(
+        "/api/v1/events", headers=write_headers, json=make_event(label="person")
+    )
     client.post("/api/v1/events", headers=write_headers, json=make_event(label="car"))
     client.post(
         "/api/v1/events",
@@ -160,7 +162,9 @@ def test_pagination_reports_the_full_total(
 ) -> None:
     for minutes in range(4):
         client.post(
-            "/api/v1/events", headers=write_headers, json=make_event(minutes_ago=minutes)
+            "/api/v1/events",
+            headers=write_headers,
+            json=make_event(minutes_ago=minutes),
         )
 
     page = client.get("/api/v1/events?limit=2", headers=read_headers).json()

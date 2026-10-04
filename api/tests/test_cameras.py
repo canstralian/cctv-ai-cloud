@@ -35,7 +35,9 @@ def test_stream_url_without_credentials_is_left_alone(
     assert response.json()["stream_url"] == "rtsp://10.0.0.9/live"
 
 
-def test_duplicate_id_conflicts(client: TestClient, write_headers: dict, camera: dict) -> None:
+def test_duplicate_id_conflicts(
+    client: TestClient, write_headers: dict, camera: dict
+) -> None:
     response = client.post(
         "/api/v1/cameras",
         headers=write_headers,
@@ -122,7 +124,9 @@ def test_list_filters_by_enabled(
     assert enabled["total"] == 1
 
 
-def test_list_paginates(client: TestClient, write_headers: dict, read_headers: dict) -> None:
+def test_list_paginates(
+    client: TestClient, write_headers: dict, read_headers: dict
+) -> None:
     for index in range(5):
         client.post(
             "/api/v1/cameras",
@@ -150,7 +154,10 @@ def test_delete_removes_camera_and_cascades_to_events(
     deleted = client.delete("/api/v1/cameras/front-door", headers=write_headers)
     assert deleted.status_code == 204
 
-    assert client.get("/api/v1/cameras/front-door", headers=read_headers).status_code == 404
+    assert (
+        client.get("/api/v1/cameras/front-door", headers=read_headers).status_code
+        == 404
+    )
     events = client.get("/api/v1/events", headers=read_headers).json()
     assert events["total"] == 0
 

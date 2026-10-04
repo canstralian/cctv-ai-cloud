@@ -11,7 +11,7 @@ Two things worth calling out:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Any, Generic, TypeVar
+from typing import Annotated, Any
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -23,8 +23,6 @@ ALLOWED_STREAM_SCHEMES = frozenset({"rtsp", "rtsps", "http", "https"})
 CameraId = Annotated[str, Field(pattern=CAMERA_ID_PATTERN, examples=["front-door"])]
 Label = Annotated[str, Field(pattern=LABEL_PATTERN, examples=["person"])]
 Score = Annotated[float, Field(ge=0.0, le=1.0)]
-
-T = TypeVar("T")
 
 
 def to_utc(value: datetime) -> datetime:
@@ -151,7 +149,7 @@ class EventOut(BaseModel):
     created_at: datetime
 
 
-class Page(BaseModel, Generic[T]):
+class Page[T](BaseModel):
     items: list[T]
     total: int
     limit: int

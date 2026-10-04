@@ -9,12 +9,19 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ..schemas import EventCreate, utc_now
-from . import iso, parse_iso
+from . import iso, parse_iso, require_written_row
 
-_COLUMNS = (
-    "id, camera_id, label, score, started_at, ended_at, "
-    "thumbnail_path, clip_path, attributes, created_at"
-)
+# Each supported filter maps to a literal SQL fragment with a bound parameter.
+# The composed WHERE clause is therefore always a join of these constants --
+# no caller-supplied text can reach the statement. Order is fixed so the
+# generated SQL is stable and the parameter list lines up with it.
+_FILTER_CLAUSES: dict[str, str] = {
+    "camera_id": "camera_id = ?",
+    "label": "label = ?",
+    "min_score": "score >= ?",
+    "since": "started_at >= ?",
+    "until": "started_at < ?",
+}
 
 
 def row_to_event(row: sqlite3.Row) -> dict[str, Any]:
@@ -38,9 +45,22 @@ def row_to_event(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def get(conn: sqlite3.Connection, event_id: str) -> sqlite3.Row | None:
-    return conn.execute(
-        f"SELECT {_COLUMNS} FROM events WHERE id = ?", (event_id,)
-    ).fetchone()
+    return conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+
+
+def _build_where(values: dict[str, Any]) -> tuple[str, list[Any]]:
+    """Compose the WHERE clause from literal fragments, in declaration order."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    for name, clause in _FILTER_CLAUSES.items():
+        value = values.get(name)
+        if value is None:
+            continue
+        clauses.append(clause)
+        params.append(iso(value) if isinstance(value, datetime) else value)
+
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where, params
 
 
 def list_page(
@@ -54,36 +74,24 @@ def list_page(
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[sqlite3.Row], int]:
-    clauses: list[str] = []
-    params: list[Any] = []
+    where, params = _build_where(
+        {
+            "camera_id": camera_id,
+            "label": label,
+            "min_score": min_score,
+            "since": since,
+            "until": until,
+        }
+    )
 
-    if camera_id is not None:
-        clauses.append("camera_id = ?")
-        params.append(camera_id)
-    if label is not None:
-        clauses.append("label = ?")
-        params.append(label)
-    if min_score is not None:
-        clauses.append("score >= ?")
-        params.append(min_score)
-    if since is not None:
-        clauses.append("started_at >= ?")
-        params.append(iso(since))
-    if until is not None:
-        clauses.append("started_at < ?")
-        params.append(iso(until))
+    # `where` is a join of _FILTER_CLAUSES literals; every value below is a
+    # bound parameter, so nothing caller-supplied reaches the statement text.
+    tail = "ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?"
+    count_sql = f"SELECT COUNT(*) FROM events {where}"  # nosec B608
+    page_sql = f"SELECT * FROM events {where} {tail}"  # nosec B608
 
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-
-    total = conn.execute(f"SELECT COUNT(*) FROM events {where}", params).fetchone()[0]
-    rows = conn.execute(
-        f"""
-        SELECT {_COLUMNS} FROM events {where}
-        ORDER BY started_at DESC, id DESC
-        LIMIT ? OFFSET ?
-        """,
-        [*params, limit, offset],
-    ).fetchall()
+    total = conn.execute(count_sql, params).fetchone()[0]
+    rows = conn.execute(page_sql, [*params, limit, offset]).fetchall()
     return rows, total
 
 
@@ -109,9 +117,7 @@ def create(conn: sqlite3.Connection, payload: EventCreate) -> sqlite3.Row:
             iso(utc_now()),
         ),
     )
-    row = get(conn, event_id)
-    assert row is not None  # just inserted inside the same transaction
-    return row
+    return require_written_row(get(conn, event_id), f"Event {event_id!r}")
 
 
 def delete(conn: sqlite3.Connection, event_id: str) -> bool:

@@ -9,7 +9,9 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DEFAULT_JWT_SECRET = "change-me"
+# Not a credential: this is the placeholder the app refuses to run with
+# outside dev (see `validate_for_runtime`). It exists to be rejected.
+DEFAULT_JWT_SECRET = "change-me"  # nosec B105
 
 # RFC 7518 §3.2: an HMAC key for HS256 should be at least as long as the digest.
 MIN_JWT_SECRET_LENGTH = 32
