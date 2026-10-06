@@ -1,0 +1,20 @@
+# Ruff configuration for the API service.
+#
+# FastAPI's dependency markers are called in argument defaults by design, which
+# B008 ("function call in argument defaults") flags. Declaring them immutable
+# here is the supported way to exempt them -- there is no equivalent
+# `ruff check` command-line flag.
+
+target-version = "py312"
+line-length = 88
+
+[lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+]
