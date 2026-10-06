@@ -104,8 +104,12 @@ CI (`.github/workflows/ci.yml`) runs on every pull request and every push to
 | `api-validation.yml` | `api/`, `scripts/`, `docker-compose.yml` change | ruff lint + format, bandit, pip-audit, pytest |
 | `web-validation.yml` | `web/` changes | eslint, `tsc` typecheck, vite build |
 
-The job **`CI / required`** always reports, and fails if any gate that ran
-failed. It is the one check to require in branch protection. The per-service
+The job **`CI / required`** always reports. It passes only when every
+service's validation succeeded if that service changed and was skipped if it
+did not; any other combination (including a failed change detection) fails it.
+The decision is `.github/scripts/ci-gate.sh`, which the job self-tests against
+an outcome matrix (`test-ci-gate.sh`) before trusting it. It is the one check to require in branch protection (GitHub lists it as
+`required`). The per-service
 checks are not: a skipped check never reports, and GitHub leaves a required
 check that never reports pending, which blocks the merge. Runs on `main` are
 post-merge verification; the pull-request check is the gate.

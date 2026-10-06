@@ -67,11 +67,11 @@ jobs:
           files=$(git diff --name-only "$range")
           printf 'Changed files:\n%s\n' "$files"
 
-          # ci.yml itself counts for both: changing the orchestration must
-          # prove it still runs every service.
+          # ci.yml and the gate scripts count for both: changing the
+          # orchestration must prove it still runs every service.
           match() { grep -qE "$1" <<< "$files" && echo true || echo false; }
-          echo "api=$(match '^(api/|scripts/|docker-compose\.yml$|\.github/workflows/(api-validation|ci)\.yml$)')" >> "$GITHUB_OUTPUT"
-          echo "web=$(match '^(web/|\.github/workflows/(web-validation|ci)\.yml$)')" >> "$GITHUB_OUTPUT"
+          echo "api=$(match '^(api/|scripts/|docker-compose\.yml$|\.github/workflows/(api-validation|ci)\.yml$|\.github/scripts/)')" >> "$GITHUB_OUTPUT"
+          echo "web=$(match '^(web/|\.github/workflows/(web-validation|ci)\.yml$|\.github/scripts/)')" >> "$GITHUB_OUTPUT"
 
   api:
     name: API
@@ -86,32 +86,31 @@ jobs:
     uses: ./.github/workflows/web-validation.yml
 
   required:
-    # The single check branch protection requires. Runs on every event,
-    # passes only if change detection succeeded and every service job either
-    # passed or was legitimately skipped because nothing it covers changed.
+    # The single check branch protection requires. Runs on every event. The
+    # decision lives in .github/scripts/ci-gate.sh: a service job must have
+    # succeeded if its selector is true and been skipped if it is false;
+    # anything else, including a failed change detection, fails the gate.
     name: required
     needs: [changes, api, web]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     steps:
-      - name: Evaluate service results
+      - name: Check out gate scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Self-test the gate (outcome matrix)
+        # If the gate logic regresses, this fails and so does `required`.
+        run: bash .github/scripts/test-ci-gate.sh
+
+      - name: Evaluate selectors and service results
         env:
           CHANGES: ${{ needs.changes.result }}
-          API: ${{ needs.api.result }}
-          WEB: ${{ needs.web.result }}
-        run: |
-          set -euo pipefail
-          echo "changes=$CHANGES api=$API web=$WEB"
-          # If detection itself failed, api/web are skipped as a side effect,
-          # and a skip must not read as a pass.
-          if [ "$CHANGES" != "success" ]; then
-            echo "::error::Change detection did not succeed ($CHANGES)."; exit 1
-          fi
-          for pair in "api:$API" "web:$WEB"; do
-            case "${pair#*:}" in
-              success|skipped) ;;
-              *) echo "::error::${pair%%:*} validation ended as '${pair#*:}'."; exit 1 ;;
-            esac
-          done
-          echo "All required validation passed."
+          API_SELECTED: ${{ needs.changes.outputs.api }}
+          API_RESULT: ${{ needs.api.result }}
+          WEB_SELECTED: ${{ needs.changes.outputs.web }}
+          WEB_RESULT: ${{ needs.web.result }}
+        run: bash .github/scripts/ci-gate.sh
