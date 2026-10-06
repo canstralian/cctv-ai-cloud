@@ -19,12 +19,14 @@
 set -uo pipefail
 
 fail=0
+# err MESSAGE: print a GitHub error annotation and mark the gate failed.
 err() { echo "::error::$*"; fail=1; }
 
 if [ "${CHANGES:-}" != "success" ]; then
   err "Change detection did not succeed (result='${CHANGES:-}')."
 fi
 
+# check NAME SELECTED RESULT: allow only true:success or false:skipped.
 check() {
   local name=$1 selected=$2 result=$3
   case "$selected:$result" in

@@ -64,6 +64,8 @@ class FrigateObject:
 
 @dataclass(frozen=True, slots=True)
 class FrigateEvent:
+    """One ``frigate/events`` MQTT message: its type and the object states."""
+
     type: FrigateMessageType
     before: FrigateObject | None  # absent on some ``new`` messages
     after: FrigateObject
@@ -134,6 +136,8 @@ class EventUpsert:
 
 
 class SkipReason(StrEnum):
+    """Why an event was not forwarded; each value is a counter in /healthz."""
+
     FALSE_POSITIVE = "false_positive"
     UNMAPPED_CAMERA = "unmapped_camera"
     INVALID_LABEL = "invalid_label"
@@ -141,6 +145,8 @@ class SkipReason(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Skip:
+    """A decision not to forward an event, with the reason recorded."""
+
     reason: SkipReason
     external_id: str
     detail: str = ""
@@ -171,6 +177,8 @@ class WorkItem:
 
 
 class SinkOutcome(StrEnum):
+    """Classified result of one API delivery; decides retry versus give up."""
+
     CREATED = "created"  # 201
     UPDATED = "updated"  # 200
     UNKNOWN_CAMERA = "unknown_camera"  # 404, permanent, do not retry
@@ -182,12 +190,16 @@ class SinkOutcome(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class SinkResult:
+    """Outcome of an upsert plus the thumbnail state the API reported."""
+
     outcome: SinkOutcome
     has_thumbnail: bool  # from the upsert response; False unless 200/201
     thumbnail_final: bool  # stored thumbnail came from the terminal message
 
 
 class EventSink(Protocol):
+    """Delivers upserts and thumbnails to the CCTV API with bounded retry."""
+
     def send(self, upsert: EventUpsert) -> SinkResult:
         """Deliver one upsert, retrying transient failures (connection
         errors, 5xx, 429) with jittered exponential backoff up to the
@@ -209,14 +221,21 @@ class EventSink(Protocol):
 class Clock(Protocol):
     """Injected so the retry schedule is testable without real sleeps."""
 
-    def monotonic(self) -> float: ...
-    def sleep(self, seconds: float) -> None: ...
+    def monotonic(self) -> float:
+        """Seconds from an arbitrary origin; never goes backwards."""
+        ...
+
+    def sleep(self, seconds: float) -> None:
+        """Block for ``seconds``; a fake clock advances instantly in tests."""
+        ...
 
 
 # --------------------------------------------------------------------------- runtime
 
 
 class Enqueue(Protocol):
+    """Non-blocking hand-off from the MQTT thread to the delivery worker."""
+
     def __call__(self, item: WorkItem) -> bool:
         """Non-blocking put, for the MQTT network thread only. False if the
         queue is full: the caller counts ``queue_overflow`` and requests early
@@ -226,6 +245,8 @@ class Enqueue(Protocol):
 
 
 class EnqueueBlocking(Protocol):
+    """Blocking hand-off used by catch-up, which must never drop a record."""
+
     def __call__(self, item: WorkItem, *, deadline: float) -> None:
         """Blocking put, for catch-up only: waits for capacity and never drops.
 
@@ -237,6 +258,8 @@ class EnqueueBlocking(Protocol):
 
 
 class Reconciler(Protocol):
+    """Catch-up: replays recent Frigate events through the same idempotent path."""
+
     def run_once(self, now: float) -> int:
         """Page Frigate events in [now - lookback, now] and enqueue each one
         (blocking, never dropping).
@@ -259,6 +282,8 @@ class Reconciler(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class HealthSnapshot:
+    """Point-in-time readings served by ``/healthz``."""
+
     mqtt_connected: bool
     last_mqtt_received_at: datetime | None
     last_api_delivery_at: datetime | None
