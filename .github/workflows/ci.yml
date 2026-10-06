@@ -67,7 +67,10 @@ jobs:
             *) echo "Event '$EVENT' runs all services."; all; exit 0 ;;
           esac
 
-          files=$(git diff --name-only "$range")
+          # --no-renames: a rename is reported as delete + add, so moving a
+          # file out of api/ or web/ still selects that service. With rename
+          # detection on, only the destination path would be listed.
+          files=$(git diff --no-renames --name-only "$range")
           printf 'Changed files:\n%s\n' "$files"
 
           # ci.yml and the gate scripts count for both: changing the
