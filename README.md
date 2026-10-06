@@ -96,13 +96,19 @@ in `data/cctv.db` (`/data/cctv.db` inside the containers).
 ./scripts/test-api.sh
 ```
 
-CI runs the same gates on every pull request and every push to `main` that
-touches the relevant service:
+CI (`.github/workflows/ci.yml`) runs on every pull request and every push to
+`main`. It detects which services changed and runs only their gates:
 
-| Workflow | Gates |
-|---|---|
-| `api-validation.yml` | ruff lint + format, bandit, pip-audit, pytest |
-| `web-validation.yml` | eslint, `tsc` typecheck, vite build |
+| Workflow | Runs when | Gates |
+|---|---|---|
+| `api-validation.yml` | `api/`, `scripts/`, `docker-compose.yml` change | ruff lint + format, bandit, pip-audit, pytest |
+| `web-validation.yml` | `web/` changes | eslint, `tsc` typecheck, vite build |
+
+The job **`CI / required`** always reports, and fails if any gate that ran
+failed. It is the one check to require in branch protection. The per-service
+checks are not: a skipped check never reports, and GitHub leaves a required
+check that never reports pending, which blocks the merge. Runs on `main` are
+post-merge verification; the pull-request check is the gate.
 
 75 tests covering auth and scope enforcement, credential redaction, CRUD,
 filtering, pagination, validation limits, and the fail-closed startup checks.

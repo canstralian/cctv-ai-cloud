@@ -1,21 +1,12 @@
 name: Web validation
 
+# Reusable: invoked by ci.yml; see the note in api-validation.yml.
 on:
-  pull_request:
-    paths: &web-paths
-      - "web/**"
-      - ".github/workflows/web-validation.yml"
-  push:
-    branches: [main]
-    paths: *web-paths
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: web-validation-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   validate:
@@ -29,12 +20,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # Matches the node:22-alpine image the compose web service runs.
           node-version: "22"

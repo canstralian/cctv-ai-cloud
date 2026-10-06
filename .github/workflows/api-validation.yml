@@ -1,25 +1,14 @@
 name: API validation
 
+# Reusable: invoked by ci.yml, which decides whether the API changed and
+# reports the one aggregate check that branch protection should require.
+# workflow_dispatch stays for running the gates by hand.
 on:
-  pull_request:
-    paths: &api-paths
-      - "api/**"
-      - "scripts/**"
-      - "docker-compose.yml"
-      - ".github/workflows/api-validation.yml"
-  # Also gate main itself: a direct push or a merge that combines two green
-  # PRs can still break it, and the PR trigger alone would never notice.
-  push:
-    branches: [main]
-    paths: *api-paths
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: api-validation-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   validate:
@@ -33,12 +22,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
