@@ -5,11 +5,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV="${REPO_ROOT}/.venv"
 
-if [[ ! -x "${VENV}/bin/python" ]]; then
-  python3 -m venv "${VENV}"
-  "${VENV}/bin/pip" install --quiet --upgrade pip
-fi
+# shellcheck source=scripts/_venv.sh
+source "${REPO_ROOT}/scripts/_venv.sh"
 
+ensure_venv "${VENV}"
+
+"${VENV}/bin/pip" install --quiet --upgrade pip
 "${VENV}/bin/pip" install --quiet -r "${REPO_ROOT}/api/requirements-dev.txt"
 
 cd "${REPO_ROOT}/api"

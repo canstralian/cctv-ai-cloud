@@ -10,12 +10,12 @@ VENV="${REPO_ROOT}/.venv"
 PORT="${PORT:-8000}"
 HOST="${HOST:-127.0.0.1}"
 
+# shellcheck source=scripts/_venv.sh
+source "${REPO_ROOT}/scripts/_venv.sh"
+
 cd "${REPO_ROOT}"
 
-if [[ ! -x "${VENV}/bin/python" ]]; then
-  echo "==> creating virtualenv at ${VENV}"
-  python3 -m venv "${VENV}"
-fi
+ensure_venv "${VENV}"
 
 echo "==> installing api dependencies"
 "${VENV}/bin/pip" install --quiet --upgrade pip

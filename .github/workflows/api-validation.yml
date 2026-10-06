@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "api/**"
+      - "scripts/**"
+      - "docker-compose.yml"
       - ".github/workflows/api-validation.yml"
   workflow_dispatch:
 
@@ -41,7 +43,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
-          python -m pip install ruff bandit pip-audit
+          # pip-audit is deliberately unpinned: it should pick up advisories
+          # published after this commit. Ruff and Bandit are pinned in
+          # requirements-dev.txt so a tool release cannot turn this gate red
+          # on a commit that changed nothing, and so local runs match CI.
+          python -m pip install pip-audit
 
       - name: Ruff lint
         # Rule configuration, including the flake8-bugbear immutable-call

@@ -17,12 +17,21 @@ services:
       sh -c "pip install --no-cache-dir -r requirements.txt &&
              uvicorn main:app --host 0.0.0.0 --port 8000"
     ports:
-      - "8000:8000"
+      # Bound to loopback on purpose. Without a .env the API comes up as
+      # ENV=dev with the placeholder JWT_SECRET, and dev skips the secret
+      # checks -- so publishing this on every interface would let anyone on
+      # the network mint a bearer token with any scope. Change this only
+      # together with a real JWT_SECRET and ENV.
+      - "127.0.0.1:8000:8000"
     restart: unless-stopped
     healthcheck:
+      # /ready, not /health: /health answers while the process lives but says
+      # nothing about the database, so the services that gate on this would be
+      # admitted against a store they cannot reach. /health stays the liveness
+      # probe for an orchestrator that wants one.
       test:
         - CMD-SHELL
-        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready')"
       interval: 10s
       timeout: 5s
       retries: 5
@@ -72,7 +81,10 @@ services:
       - "8554:8554"
     volumes:
       - ./data:/media/frigate
-      - ./nvr/config.yml:/config/config.yml:ro
+      # Writable: Frigate's settings UI and config-save API write this file.
+      # Mounting it read-only makes those fail. The trade-off is that Frigate
+      # can edit a version-controlled file, so expect to commit its changes.
+      - ./nvr/config.yml:/config/config.yml
     restart: unless-stopped
 
 volumes:
