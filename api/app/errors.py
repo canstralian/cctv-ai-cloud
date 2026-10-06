@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import FastAPI, Request, status
@@ -10,9 +11,16 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .logging_setup import REQUEST_ID_HEADER
+
 # Spelled out rather than imported: Starlette renamed the 422 constant, and the
 # number is stable across both spellings.
 HTTP_422 = 422
+
+# Pydantic error keys that can carry the caller's own payload back out.
+_OMIT_FROM_ERRORS = frozenset({"input", "ctx", "url"})
+
+log = logging.getLogger("api.errors")
 
 
 class ApiError(Exception):
@@ -65,6 +73,24 @@ def _envelope(
     return JSONResponse(status_code=status_code, content=body)
 
 
+def _safe_validation_details(errors: list[Any]) -> list[dict[str, Any]]:
+    """Describe what failed without echoing what was sent.
+
+    Pydantic puts the rejected value in each error's ``input``. For a bad
+    ``stream_url`` that value is an RTSP URL with camera credentials in it, so
+    returning it would undo the redaction the responses otherwise guarantee.
+    The field location, message and error type are enough for a client to act.
+    """
+    sanitised: list[dict[str, Any]] = []
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        sanitised.append(
+            {key: value for key, value in error.items() if key not in _OMIT_FROM_ERRORS}
+        )
+    return sanitised
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
@@ -91,5 +117,33 @@ def register_exception_handlers(app: FastAPI) -> None:
             HTTP_422,
             "validation_error",
             "Request payload failed validation.",
-            exc.errors(),
+            _safe_validation_details(exc.errors()),
         )
+
+    @app.exception_handler(Exception)
+    async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
+        """Last resort, so a 500 still honours the documented error contract.
+
+        This runs in Starlette's ServerErrorMiddleware, outside the middleware
+        that normally attaches the header, so set it here too. The cause is
+        logged but never described to the caller -- the request id is the
+        handle for correlating with the log.
+        """
+        request_id = getattr(request.state, "request_id", None)
+        log.exception(
+            "unhandled exception",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+            },
+        )
+        response = _envelope(
+            request,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "An unexpected error occurred.",
+        )
+        if request_id:
+            response.headers[REQUEST_ID_HEADER] = request_id
+        return response

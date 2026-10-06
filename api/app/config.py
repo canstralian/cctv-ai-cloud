@@ -63,6 +63,19 @@ class Settings(BaseSettings):
     def _upper_log_level(cls, value: str) -> str:
         return value.upper()
 
+    @field_validator("database_path")
+    @classmethod
+    def _anchor_database_path(cls, value: Path) -> Path:
+        """Resolve a relative DATABASE_PATH against the repo root, not the CWD.
+
+        `.env.example` documents `data/cctv.db`, but the API is launched from
+        `api/`, so a CWD-relative path would quietly land in `api/data/`. The
+        containers pass an absolute path and are unaffected.
+        """
+        if str(value) == ":memory:" or value.is_absolute():
+            return value
+        return REPO_ROOT / value
+
     @property
     def is_dev(self) -> bool:
         return self.env == "dev"

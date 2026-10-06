@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime
 
 from fastapi import APIRouter, Query, status
 
-from ..db import transaction
+from ..db import is_foreign_key_violation, transaction
 from ..deps import Db
 from ..errors import NotFound
-from ..repositories import cameras as camera_repo
 from ..repositories import events as repo
 from ..schemas import EventCreate, EventOut, Page
 from ..security import RequireRead, RequireWrite
@@ -54,12 +54,19 @@ def list_events(
     summary="Ingest a detection event",
 )
 def create_event(payload: EventCreate, db: Db, _: RequireWrite) -> EventOut:
-    """Called by the NVR / ML worker when a detection fires."""
-    if not camera_repo.exists(db, payload.camera_id):
-        raise NotFound("Camera", payload.camera_id)
+    """Called by the NVR / ML worker when a detection fires.
 
-    with transaction(db):
-        row = repo.create(db, payload)
+    The camera is not checked up front: between a check and the insert the
+    camera could be deleted, and the foreign key would then surface as a 500.
+    Letting the constraint decide keeps it atomic.
+    """
+    try:
+        with transaction(db):
+            row = repo.create(db, payload)
+    except sqlite3.IntegrityError as exc:
+        if is_foreign_key_violation(exc):
+            raise NotFound("Camera", payload.camera_id) from exc
+        raise
     return EventOut(**repo.row_to_event(row))
 
 

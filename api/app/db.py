@@ -86,3 +86,10 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
         raise
     else:
         conn.execute("COMMIT")
+
+
+def is_foreign_key_violation(exc: sqlite3.IntegrityError) -> bool:
+    """Distinguish a missing parent row from other integrity failures."""
+    if getattr(exc, "sqlite_errorname", "") == "SQLITE_CONSTRAINT_FOREIGNKEY":
+        return True
+    return "FOREIGN KEY constraint failed" in str(exc)

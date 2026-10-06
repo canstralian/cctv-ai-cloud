@@ -14,11 +14,16 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CAMERA_ID_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
 LABEL_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,31}$"
 ALLOWED_STREAM_SCHEMES = frozenset({"rtsp", "rtsps", "http", "https"})
+
+# Camera columns declared NOT NULL. A PATCH may omit these but not null them.
+NON_NULLABLE_CAMERA_FIELDS = frozenset(
+    {"name", "stream_url", "enabled", "detection_enabled"}
+)
 
 CameraId = Annotated[str, Field(pattern=CAMERA_ID_PATTERN, examples=["front-door"])]
 Label = Annotated[str, Field(pattern=LABEL_PATTERN, examples=["person"])]
@@ -51,9 +56,13 @@ def redact_stream_url(url: str) -> str:
 
 
 def validate_stream_url(value: str) -> str:
-    scheme = urlsplit(value).scheme.lower()
-    if scheme not in ALLOWED_STREAM_SCHEMES:
+    parts = urlsplit(value)
+    if parts.scheme.lower() not in ALLOWED_STREAM_SCHEMES:
         raise ValueError("stream_url must use rtsp, rtsps, http or https")
+    # A scheme alone is not a reachable stream: `rtsp:///path` and `https:path`
+    # both parse happily but have nowhere to connect to.
+    if not parts.hostname:
+        raise ValueError("stream_url must include a host")
     return value
 
 
@@ -88,6 +97,8 @@ class CameraCreate(CameraBase):
 
 
 class CameraUpdate(BaseModel):
+    """A PATCH body. Omitted fields are left alone; see `_reject_null_columns`."""
+
     name: str | None = Field(default=None, min_length=1, max_length=120)
     stream_url: str | None = Field(default=None, min_length=1, max_length=2048)
     location: str | None = Field(default=None, max_length=120)
@@ -98,6 +109,24 @@ class CameraUpdate(BaseModel):
     @classmethod
     def _check_stream_url(cls, value: str | None) -> str | None:
         return None if value is None else validate_stream_url(value)
+
+    @model_validator(mode="after")
+    def _reject_null_columns(self) -> CameraUpdate:
+        """Reject an explicit JSON null on a column that is NOT NULL.
+
+        These fields are nullable only so they can be *omitted*. Sending
+        `null` would otherwise reach the UPDATE and fail the constraint as a
+        500 rather than a validation error. `location` is genuinely nullable,
+        so passing null there clears it.
+        """
+        supplied_nulls = [
+            name
+            for name in NON_NULLABLE_CAMERA_FIELDS & self.model_fields_set
+            if getattr(self, name) is None
+        ]
+        if supplied_nulls:
+            raise ValueError(f"may not be null: {', '.join(sorted(supplied_nulls))}")
+        return self
 
 
 class CameraOut(BaseModel):

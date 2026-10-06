@@ -138,9 +138,13 @@ def stats(conn: sqlite3.Connection, *, top_n: int = 10) -> dict[str, Any]:
 
     events_total = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 
-    day_ago = iso(utc_now() - timedelta(days=1))
+    # Bound the window at both ends off one captured instant. Ingest accepts
+    # whatever timestamp a caller sends, so an unbounded lower-bound query
+    # would let a future-dated event inflate a "last 24 hours" figure.
+    now = utc_now()
     events_last_24h = conn.execute(
-        "SELECT COUNT(*) FROM events WHERE started_at >= ?", (day_ago,)
+        "SELECT COUNT(*) FROM events WHERE started_at >= ? AND started_at <= ?",
+        (iso(now - timedelta(days=1)), iso(now)),
     ).fetchone()[0]
 
     last_event_at = conn.execute("SELECT MAX(started_at) FROM events").fetchone()[0]

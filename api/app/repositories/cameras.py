@@ -39,13 +39,6 @@ def get(conn: sqlite3.Connection, camera_id: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM cameras WHERE id = ?", (camera_id,)).fetchone()
 
 
-def exists(conn: sqlite3.Connection, camera_id: str) -> bool:
-    return (
-        conn.execute("SELECT 1 FROM cameras WHERE id = ?", (camera_id,)).fetchone()
-        is not None
-    )
-
-
 def list_page(
     conn: sqlite3.Connection,
     *,
