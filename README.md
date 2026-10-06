@@ -96,7 +96,25 @@ in `data/cctv.db` (`/data/cctv.db` inside the containers).
 ./scripts/test-api.sh
 ```
 
-53 tests covering auth and scope enforcement, credential redaction, CRUD,
+CI (`.github/workflows/ci.yml`) runs on every pull request and every push to
+`main`. It detects which services changed and runs only their gates:
+
+| Workflow | Runs when | Gates |
+|---|---|---|
+| `api-validation.yml` | `api/`, `scripts/`, `docker-compose.yml`, `api-validation.yml`, `ci.yml` or `.github/scripts/` change | ruff lint + format, bandit, pip-audit, pytest |
+| `web-validation.yml` | `web/`, `web-validation.yml`, `ci.yml` or `.github/scripts/` change | eslint, `tsc` typecheck, vite build |
+
+The job **`CI / required`** always reports. It passes only when every
+service's validation succeeded if that service changed and was skipped if it
+did not; any other combination (including a failed change detection) fails it.
+The decision is `.github/scripts/ci-gate.sh`, which the job self-tests against
+an outcome matrix (`test-ci-gate.sh`) before trusting it. It is the one check to require in branch protection (GitHub lists it as
+`required`). The per-service
+checks are not: a skipped check never reports, and GitHub leaves a required
+check that never reports pending, which blocks the merge. Runs on `main` are
+post-merge verification; the pull-request check is the gate.
+
+75 tests covering auth and scope enforcement, credential redaction, CRUD,
 filtering, pagination, validation limits, and the fail-closed startup checks.
 
 ## Roadmap
@@ -106,6 +124,5 @@ Shipped so far is the API slice. Still to come:
 - **web** — replace the Vite starter template with a live dashboard against `/api/v1`
 - **ml** — inference worker that posts detections to `POST /api/v1/events`
 - **nvr** — real Frigate camera config and an MQTT bridge into the event ingest
-- **ci** — GitHub Actions running the test suite on every push
 - **ops** — Dockerfiles pinned per service, and the event-retention prune job
   (`EVENT_RETENTION_DAYS` and `prune_older_than` exist; nothing schedules them yet)

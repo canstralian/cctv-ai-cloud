@@ -1,0 +1,45 @@
+name: Web validation
+
+# Reusable: invoked by ci.yml; see the note in api-validation.yml.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Web lint, typecheck and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # Matches the node:22-alpine image the compose web service runs.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        # npm ci, not install: fails if package-lock.json drifts from
+        # package.json instead of silently rewriting it.
+        run: npm ci --no-audit --no-fund
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Typecheck and build
+        # The build script is `tsc -b && vite build`, so this is the type gate too.
+        run: npm run build
