@@ -1,42 +1,60 @@
-# Frigate Bridge: Integration Plan
+# Frigate Bridge: Integration Plan (rev 2)
 
-Order matters: each step ships and stays green on its own, and nothing
-downstream depends on a later step.
+Each step ships green on its own and can be reverted on its own. Steps 1–4
+can merge before the bridge exists.
 
 | # | Change | Touches | Breaks | Rollback |
 |---|---|---|---|---|
-| 1 | **Pin Frigate** to a specific version instead of `stable`; move Frigate media to `./data/frigate` | `docker-compose.yml`, `.gitignore` | Existing recordings in `./data/*` stop being visible to Frigate (move them, or start fresh) | Revert the compose line |
-| 2 | **ADR 0001 API change**: `source`/`external_id` columns, partial unique index, `PRAGMA user_version` migration, `PUT …/by-source/{source}/{external_id}`, fields on `EventOut` | `api/app/db.py`, `schemas.py`, `repositories/events.py`, `routers/events.py`, tests | Nothing: additive; `POST` unchanged | Columns are nullable and unused by old code; revert the code and leave the columns |
-| 3 | **Mosquitto service**: password file, listener on the compose network only (no host port), persistence on, `max_inflight_messages 1` | `docker-compose.yml`, `nvr/mosquitto/mosquitto.conf`, `.env.example` | Nothing | Remove the service |
-| 4 | **Frigate MQTT on**: `mqtt.enabled: true`, host `mosquitto`, credentials via `{FRIGATE_MQTT_PASSWORD}` env substitution; one test camera | `nvr/config.yml` | Nothing | `mqtt.enabled: false` |
-| 5 | **`bridge/` service**: modules per `interfaces.py`, unit tests on recorded Frigate payloads (fixtures), compose service with `BRIDGE_API_KEY` | `bridge/**`, `docker-compose.yml`, `.env.example`, new `bridge-validation.yml` workflow | Nothing | Stop the service |
-| 6 | **Docs**: README services table, roadmap tick, a "register your cameras with IDs matching Frigate names" note | `README.md` | — | — |
+| 1 | **Pin and close Frigate:** image `0.18.0@sha256:9678a83a…14d35`. **Stop publishing port 5000** (unauthenticated) and publish `8971` (authenticated) instead. Move media to `./data/frigate`. Create a Frigate viewer user for the bridge | `docker-compose.yml`, `nvr/config.yml`, `.gitignore`, README | Anything on the LAN using `:5000` must switch to `:8971` and log in. Existing recordings in `./data/*` need moving | Revert the compose lines |
+| 2 | **ADR 0001 (amended):** `source`/`external_id` columns, partial unique index, `BEGIN IMMEDIATE` migration, `PUT by-source`, `API_KEYS` 4th field (source binding), `last_ingest_at` in stats | `api/app/{db,config,security,schemas}.py`, `repositories/events.py`, `routers/events.py`, `routers/stats.py`, tests | Nothing: existing `POST` and 3-field keys are unchanged | Columns are nullable and unused by old code |
+| 3 | **ADR 0002:** thumbnail `PUT`/`GET`, atomic file write, size and type checks, deletes on row delete/cascade/prune, orphan sweep, `has_thumbnail` on `EventOut` | `api/app/**`, tests, `.env.example` (`THUMBNAIL_MAX_BYTES`) | `EventOut.thumbnail_path` → `has_thumbnail` (no consumers exist yet) | Revert; files in `data/thumbnails/` can be deleted |
+| 4 | **Mosquitto:** password file, **ACL file** (`frigate`: write `frigate/#`; `bridge`: read `frigate/events`), listener on the compose network only, persistence on, session expiry 24 h | `docker-compose.yml`, `nvr/mosquitto/{mosquitto.conf,acl}`, `.env.example` | Nothing | Remove the service |
+| 5 | **Frigate MQTT on:** host `mosquitto`, user `frigate`, password via `{FRIGATE_MQTT_PASSWORD}`, plus one test camera | `nvr/config.yml` | Nothing | `mqtt.enabled: false` |
+| 6 | **`bridge/` service** per `interfaces.py`. First task: verify the Frigate 8971 login flow (architecture Assumption 6). Compose health check on `/healthz`. Add a `bridge` path filter to `ci.yml` with a `bridge-validation.yml` | `bridge/**`, `docker-compose.yml`, `.github/workflows/` | Nothing | Stop the service |
+| 7 | **Docs/runbook:** register cameras with IDs that match Frigate's names, the one-off long-lookback catch-up, and reading `/healthz` | README | — | — |
 
 ## Test strategy
 
-- **API (step 2):**
-  - First PUT gives 201; the same PUT again gives 200 with the same `id`.
-  - A changed `camera_id` gives 409.
-  - An unknown camera gives 404.
-  - A row created by `POST` is untouched.
-  - Migration on a pre-existing DB is idempotent.
-  - Two concurrent PUTs with the same key leave one row.
-- **Bridge (step 5), offline, no broker:**
-  - `parse` against recorded payloads for `new` / `update` / `end` /
-    malformed / missing field.
-  - `to_upsert` table tests for every `SkipReason` and the field mapping.
-  - `sink` with a fake transport and a fake `Clock`: 201, 200, 404 (no
-    retry), 5xx → retry → 200, deadline exhausted, 401 (fatal).
+- **Step 2:**
+  - 201 → 200 with the same `id`.
+  - 409 on a changed `camera_id`/`started_at`.
+  - 403 when the key isn't bound to the source; 403 for a JWT.
+  - A 3-field key can't reach `by-source`.
+  - Running the migration twice is a no-op.
+  - Two connections migrating at once leave one schema.
+  - Concurrent same-key PUTs leave one row.
+- **Step 3:**
+  - 413 over the cap; 415 when the bytes aren't JPEG.
+  - A replace leaves no temp file behind.
+  - Event delete, camera cascade and prune each remove the file.
+  - The orphan sweep removes files with no row and keeps files that have one.
+- **Step 6, offline (fakes for MQTT, Frigate and the API, plus a fake
+  clock):**
+  - `parse_mqtt` / `parse_http` against **recorded 0.18.0 payloads**,
+    captured during step 5.
+  - Mapping table tests.
+  - Worker order per ID.
+  - Queue overflow is counted and triggers early catch-up.
+  - Gave-up triggers early catch-up.
+  - Catch-up paging and the window bounds.
+  - Thumbnail fetch on the first snapshot and on `end`, and on catch-up only
+    when `has_thumbnail` is false.
+  - Health turns unhealthy only on the stated conditions.
 - **End to end (manual, once):**
-  1. `mosquitto_pub` a recorded `new`, `update` and `end` for one event.
-  2. Expect exactly one row in `GET /api/v1/events?camera_id=…`, with
-     `ended_at` set.
+  1. Stop the API.
+  2. Walk past the camera.
+  3. Wait for the event to end.
+  4. Start the API.
+  5. Within one catch-up interval there should be exactly one row, with
+     `ended_at` set and a thumbnail.
 
 ## Security checklist
 
-- Mosquitto has no host port and requires auth.
-- The bridge API key has `write` scope only, and its own key name
-  (`frigate-bridge`), so it can be revoked on its own.
-- Neither secret is logged; the settings `repr` masks them.
-- Frigate's `privileged: true` is unchanged here, but flagged for the ops
-  step.
+- Frigate: only 8971 published; the bridge uses a **viewer** user.
+- Mosquitto: no host port; password auth plus ACLs; `frigate` is the only
+  publisher on `frigate/#`.
+- API: the bridge key is `write`, bound to `source=frigate`, and named
+  `frigate-bridge` so it can be revoked on its own.
+- Thumbnail upload: size cap, magic-byte check, filenames from the event
+  UUID only (never from client input), atomic rename.
+- No secret appears in logs or in `/healthz`.

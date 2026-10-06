@@ -1,6 +1,6 @@
 # ADR 0001: Idempotent event upsert keyed by (source, external_id)
 
-- **Status:** Accepted (2026-10-06). Refinements from review F6 (source-bound keys) and F9 (migration race) to be folded in at build time
+- **Status:** Accepted (2026-10-06), amended the same day after review F6/F9 (see *Amendments*)
 - **Date:** 2026-10-06
 - **Context doc:** [Frigate bridge architecture](../design/frigate-bridge/architecture.md)
 
@@ -43,6 +43,21 @@ PUT /api/v1/events/by-source/{source}/{external_id}    scope: write
   INDEX IF NOT EXISTS`, run idempotently at startup next to the existing
   `init_db`. Old rows need no backfill.
 - `POST /api/v1/events` stays as it is, for producers with no stable ID.
+
+## Amendments (2026-10-06, after review)
+
+- **Source-bound write authority (F6).** `API_KEYS` entries gain an optional
+  fourth field listing the sources the key may write:
+  `name:secret:scopes:source|source`. A `by-source` request whose `{source}`
+  is not in the key's list gets **403**. A key with no list may write no
+  `by-source` path at all (fail-closed). JWT principals may not use
+  `by-source` paths. Without this, `source` is a naming convention, not an
+  authority boundary.
+- **Migration race (F9).** The `user_version` check and the `ALTER TABLE`s
+  run inside one `BEGIN IMMEDIATE` transaction, so a second worker waits,
+  then sees the new version and does nothing.
+- **Thumbnail is API-owned on this path.** `thumbnail_path` is not accepted
+  in the `by-source` body; see [ADR 0002](0002-api-owns-event-thumbnails.md).
 
 ## Consequences
 

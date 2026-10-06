@@ -14,6 +14,8 @@ inputs:
 
 # Review: Frigate bridge design
 
+> **Status:** every finding is resolved in [architecture rev 2](architecture.md#what-changed-from-rev-1) and ADRs 0001 (amended), 0002 and 0003.
+
 ## Steelman
 
 Frigate already does the hard part: it detects, tracks and publishes every

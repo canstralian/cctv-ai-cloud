@@ -1,4 +1,4 @@
-"""Frigate bridge: interface contract (design artifact, not runnable code).
+"""Frigate bridge: interface contract, rev 2 (design artifact, not runnable code).
 
 Signatures and types only. Bodies are intentionally ``...``: the Builder
 stage implements them under ``bridge/``. See ``architecture.md`` for the
@@ -25,9 +25,16 @@ class BridgeSettings(Protocol):
     mqtt_topic: str  # MQTT_TOPIC, default "frigate/events"
     mqtt_client_id: str  # MQTT_CLIENT_ID, fixed so the broker keeps the session
     api_base_url: str  # API_BASE_URL, default "http://api:8000"
-    api_key: str  # BRIDGE_API_KEY, write scope (never logged)
+    api_key: str  # BRIDGE_API_KEY: write scope, bound to source "frigate" (never logged)
+    frigate_base_url: str  # FRIGATE_BASE_URL, default "https://nvr:8971" (authenticated port)
+    frigate_username: str  # FRIGATE_USERNAME, a Frigate *viewer* user
+    frigate_password: str  # FRIGATE_PASSWORD (never logged)
     camera_map: dict[str, str]  # CAMERA_MAP="Front_Door:front-door,…"
-    sink_max_elapsed_s: float  # SINK_MAX_ELAPSED, default 120
+    sink_max_elapsed_s: float  # SINK_MAX_ELAPSED, default 60
+    queue_maxsize: int  # QUEUE_MAXSIZE, default 1000
+    reconcile_interval_s: float  # RECONCILE_INTERVAL, default 600
+    reconcile_lookback_s: float  # RECONCILE_LOOKBACK, default 21600 (6 h)
+    health_port: int  # HEALTH_PORT, default 8080
 
 
 # --------------------------------------------------------------------------- frigate
@@ -66,13 +73,42 @@ class FrigatePayloadError(ValueError):
     """Payload is not JSON, or is missing a field the mapping requires."""
 
 
-def parse(payload: bytes) -> FrigateEvent:
+def parse_mqtt(payload: bytes) -> FrigateEvent:
     """Parse one ``frigate/events`` message. Unknown fields are ignored.
 
     Raises:
         FrigatePayloadError: malformed JSON or a missing required field.
     """
     ...
+
+
+def parse_http(record: dict[str, Any]) -> FrigateObject:
+    """Parse one ``GET /api/events`` record into the same internal type.
+
+    HTTP shape differs from MQTT: ``zones`` (not ``entered_zones``),
+    ``data.top_score``, ``sub_label`` as a plain string with
+    ``data.sub_label_score``.
+
+    Raises:
+        FrigatePayloadError: a required field is missing.
+    """
+    ...
+
+
+class FrigateUnavailable(Exception):
+    """Frigate could not be reached or refused the viewer credential."""
+
+
+class FrigateClient(Protocol):
+    """Read-only access to Frigate's authenticated API (port 8971, viewer role)."""
+
+    def events(self, *, after: float, before: float, limit: int) -> list[dict[str, Any]]:
+        """One page of ``GET /api/events``, newest first. Raises FrigateUnavailable."""
+        ...
+
+    def snapshot_jpeg(self, event_id: str) -> bytes | None:
+        """``GET /api/events/{id}/snapshot.jpg``; None on 404. Raises FrigateUnavailable."""
+        ...
 
 
 # --------------------------------------------------------------------------- mapping
@@ -96,7 +132,6 @@ class EventUpsert:
 
 class SkipReason(StrEnum):
     FALSE_POSITIVE = "false_positive"
-    UNCHANGED_UPDATE = "unchanged_update"
     UNMAPPED_CAMERA = "unmapped_camera"
     INVALID_LABEL = "invalid_label"
 
@@ -108,7 +143,7 @@ class Skip:
     detail: str = ""
 
 
-def to_upsert(event: FrigateEvent, camera_map: dict[str, str]) -> EventUpsert | Skip:
+def to_upsert(obj: FrigateObject, camera_map: dict[str, str]) -> EventUpsert | Skip:
     """Map a Frigate event to an API upsert, or say why it is skipped.
 
     Pure: no IO, no clock. Same input always gives the same output.
@@ -116,9 +151,17 @@ def to_upsert(event: FrigateEvent, camera_map: dict[str, str]) -> EventUpsert | 
     ...
 
 
-def is_material_update(before: FrigateObject, after: FrigateObject) -> bool:
-    """True if top_score, sub_label, has_snapshot or has_clip changed."""
-    ...
+Origin = Literal["mqtt", "catchup"]
+
+
+@dataclass(frozen=True, slots=True)
+class WorkItem:
+    """What the MQTT thread and catch-up hand to the delivery worker."""
+
+    origin: Origin
+    obj: FrigateObject
+    is_end: bool  # MQTT ``end``, or an HTTP record with end_time set
+    mqtt_mid: int | None  # message id to acknowledge; None for catch-up
 
 
 # --------------------------------------------------------------------------- sink
@@ -128,17 +171,28 @@ class SinkOutcome(StrEnum):
     CREATED = "created"  # 201
     UPDATED = "updated"  # 200
     UNKNOWN_CAMERA = "unknown_camera"  # 404, permanent, do not retry
+    FORBIDDEN_SOURCE = "forbidden_source"  # 403, key not bound to this source; fatal
     REJECTED = "rejected"  # 409 / 422, permanent, do not retry
     UNAUTHORIZED = "unauthorized"  # 401 / 403, fatal: bridge exits non-zero
-    API_UNAVAILABLE = "api_unavailable"  # retry budget exhausted
+    API_UNAVAILABLE = "api_unavailable"  # retry budget exhausted; schedules catch-up
+
+
+@dataclass(frozen=True, slots=True)
+class SinkResult:
+    outcome: SinkOutcome
+    has_thumbnail: bool  # from the upsert response; False unless 200/201
 
 
 class EventSink(Protocol):
-    def send(self, upsert: EventUpsert) -> SinkOutcome:
+    def send(self, upsert: EventUpsert) -> SinkResult:
         """Deliver one upsert, retrying transient failures (connection
         errors, 5xx, 429) with jittered exponential backoff up to the
         configured deadline. Never raises for HTTP outcomes; returns one.
         """
+        ...
+
+    def put_thumbnail(self, source: str, external_id: str, jpeg: bytes) -> SinkOutcome:
+        """``PUT …/by-source/{source}/{external_id}/thumbnail``; same retry policy."""
         ...
 
 
@@ -147,3 +201,44 @@ class Clock(Protocol):
 
     def monotonic(self) -> float: ...
     def sleep(self, seconds: float) -> None: ...
+
+
+# --------------------------------------------------------------------------- runtime
+
+
+class Enqueue(Protocol):
+    def __call__(self, item: WorkItem) -> bool:
+        """Non-blocking put. False if the queue is full: the caller counts
+        ``queue_overflow`` and requests early catch-up. Never blocks the
+        MQTT network thread.
+        """
+        ...
+
+
+class Reconciler(Protocol):
+    def run_once(self, now: float) -> int:
+        """Page Frigate events in [now - lookback, now] and enqueue each one.
+        Returns the number enqueued. Raises FrigateUnavailable.
+        """
+        ...
+
+    def request_early(self) -> None:
+        """Ask for a run soon (debounced to at most one a minute)."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class HealthSnapshot:
+    mqtt_connected: bool
+    last_mqtt_received_at: datetime | None
+    last_api_delivery_at: datetime | None
+    last_reconciliation_at: datetime | None
+    reconciliation_status: Literal["ok", "failed", "never"]
+    queue_depth: int
+    counters: dict[str, int]
+
+    def is_healthy(self, now: datetime) -> bool:
+        """False if MQTT has been disconnected for more than 60 s, or the last two
+        catch-up runs failed. An absence of events is never unhealthy.
+        """
+        ...
