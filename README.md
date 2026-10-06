@@ -96,7 +96,15 @@ in `data/cctv.db` (`/data/cctv.db` inside the containers).
 ./scripts/test-api.sh
 ```
 
-53 tests covering auth and scope enforcement, credential redaction, CRUD,
+CI runs the same gates on every pull request and every push to `main` that
+touches the relevant service:
+
+| Workflow | Gates |
+|---|---|
+| `api-validation.yml` | ruff lint + format, bandit, pip-audit, pytest |
+| `web-validation.yml` | eslint, `tsc` typecheck, vite build |
+
+75 tests covering auth and scope enforcement, credential redaction, CRUD,
 filtering, pagination, validation limits, and the fail-closed startup checks.
 
 ## Roadmap
@@ -106,6 +114,5 @@ Shipped so far is the API slice. Still to come:
 - **web** — replace the Vite starter template with a live dashboard against `/api/v1`
 - **ml** — inference worker that posts detections to `POST /api/v1/events`
 - **nvr** — real Frigate camera config and an MQTT bridge into the event ingest
-- **ci** — GitHub Actions running the test suite on every push
 - **ops** — Dockerfiles pinned per service, and the event-retention prune job
   (`EVENT_RETENTION_DAYS` and `prune_older_than` exist; nothing schedules them yet)

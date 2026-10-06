@@ -2,11 +2,16 @@ name: API validation
 
 on:
   pull_request:
-    paths:
+    paths: &api-paths
       - "api/**"
       - "scripts/**"
       - "docker-compose.yml"
       - ".github/workflows/api-validation.yml"
+  # Also gate main itself: a direct push or a merge that combines two green
+  # PRs can still break it, and the PR trigger alone would never notice.
+  push:
+    branches: [main]
+    paths: *api-paths
   workflow_dispatch:
 
 permissions:
