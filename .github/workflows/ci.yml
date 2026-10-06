@@ -20,9 +20,12 @@ on:
 permissions:
   contents: read
 
+# Pull requests: a new push to the PR cancels its stale run. Pushes to main
+# and manual runs each get their own group, so a later (say docs-only) push
+# can never cancel the post-merge validation of an earlier one.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:

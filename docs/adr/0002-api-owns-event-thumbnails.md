@@ -28,9 +28,17 @@ Frigate is where a thumbnail comes from, never where it's stored.
 - The file's lifetime follows the row. Event delete, camera cascade and the
   retention prune all remove it. The prune job also sweeps files whose row is
   gone, so a crash between deleting the row and deleting the file can't leak.
-- `EventOut.thumbnail_path` is replaced by `has_thumbnail: bool` plus the
-  GET route. `POST` keeps accepting `thumbnail_path` for compatibility, but
-  it's documented as an unmanaged, best-effort pointer.
+- `EventOut` **gains** `has_thumbnail: bool` (an API-owned file exists,
+  served by the GET route) and `thumbnail_final: bool` (that file came from
+  the event's terminal message). It **keeps** `thumbnail_path` unchanged.
+  `POST` still accepts it and echoes it back, as
+  `api/tests/test_events.py` asserts. It's documented as an unmanaged,
+  best-effort pointer, and is always null on `by-source` rows. No existing
+  client or test changes.
+- The thumbnail `PUT` takes `?final=true` when the image comes from an
+  ended event. The API stores that as `thumbnail_final`, and a later
+  non-final upload never replaces a final one (the same monotonic rule as
+  ADR 0001).
 
 ## Consequences
 

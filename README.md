@@ -101,8 +101,8 @@ CI (`.github/workflows/ci.yml`) runs on every pull request and every push to
 
 | Workflow | Runs when | Gates |
 |---|---|---|
-| `api-validation.yml` | `api/`, `scripts/`, `docker-compose.yml` change | ruff lint + format, bandit, pip-audit, pytest |
-| `web-validation.yml` | `web/` changes | eslint, `tsc` typecheck, vite build |
+| `api-validation.yml` | `api/`, `scripts/`, `docker-compose.yml`, `api-validation.yml`, `ci.yml` or `.github/scripts/` change | ruff lint + format, bandit, pip-audit, pytest |
+| `web-validation.yml` | `web/`, `web-validation.yml`, `ci.yml` or `.github/scripts/` change | eslint, `tsc` typecheck, vite build |
 
 The job **`CI / required`** always reports. It passes only when every
 service's validation succeeded if that service changed and was skipped if it

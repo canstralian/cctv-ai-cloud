@@ -25,7 +25,7 @@ class BridgeSettings(Protocol):
     mqtt_topic: str  # MQTT_TOPIC, default "frigate/events"
     mqtt_client_id: str  # MQTT_CLIENT_ID, fixed so the broker keeps the session
     api_base_url: str  # API_BASE_URL, default "http://api:8000"
-    api_key: str  # BRIDGE_API_KEY: write scope, bound to source "frigate" (never logged)
+    api_key: str  # BRIDGE_API_KEY: scope `ingest` bound to source "frigate"; not `write` (never logged)
     frigate_base_url: str  # FRIGATE_BASE_URL, default "https://nvr:8971" (authenticated port)
     frigate_username: str  # FRIGATE_USERNAME, a Frigate *viewer* user
     frigate_password: str  # FRIGATE_PASSWORD (never logged)
@@ -99,6 +99,10 @@ class FrigateUnavailable(Exception):
     """Frigate could not be reached or refused the viewer credential."""
 
 
+class ReconcileError(Exception):
+    """A catch-up run could not complete without skipping records."""
+
+
 class FrigateClient(Protocol):
     """Read-only access to Frigate's authenticated API (port 8971, viewer role)."""
 
@@ -125,7 +129,6 @@ class EventUpsert:
     score: float
     started_at: datetime  # tz-aware UTC
     ended_at: datetime | None
-    thumbnail_path: str | None
     clip_path: str | None
     attributes: dict[str, Any]
 
@@ -181,6 +184,7 @@ class SinkOutcome(StrEnum):
 class SinkResult:
     outcome: SinkOutcome
     has_thumbnail: bool  # from the upsert response; False unless 200/201
+    thumbnail_final: bool  # stored thumbnail came from the terminal message
 
 
 class EventSink(Protocol):
@@ -191,8 +195,14 @@ class EventSink(Protocol):
         """
         ...
 
-    def put_thumbnail(self, source: str, external_id: str, jpeg: bytes) -> SinkOutcome:
-        """``PUT …/by-source/{source}/{external_id}/thumbnail``; same retry policy."""
+    def put_thumbnail(
+        self, source: str, external_id: str, jpeg: bytes, *, final: bool
+    ) -> SinkOutcome:
+        """``PUT …/by-source/{source}/{external_id}/thumbnail[?final=true]``.
+
+        Same retry policy. ``final`` is True when the image comes from an ended
+        event; the API never replaces a final thumbnail with a non-final one.
+        """
         ...
 
 
@@ -208,17 +218,37 @@ class Clock(Protocol):
 
 class Enqueue(Protocol):
     def __call__(self, item: WorkItem) -> bool:
-        """Non-blocking put. False if the queue is full: the caller counts
-        ``queue_overflow`` and requests early catch-up. Never blocks the
-        MQTT network thread.
+        """Non-blocking put, for the MQTT network thread only. False if the
+        queue is full: the caller counts ``queue_overflow`` and requests early
+        catch-up. Never blocks.
+        """
+        ...
+
+
+class EnqueueBlocking(Protocol):
+    def __call__(self, item: WorkItem, *, deadline: float) -> None:
+        """Blocking put, for catch-up only: waits for capacity and never drops.
+
+        Raises:
+            TimeoutError: ``deadline`` (monotonic seconds) passed first; the
+                run ends as ``failed`` and the next run restarts the window.
         """
         ...
 
 
 class Reconciler(Protocol):
     def run_once(self, now: float) -> int:
-        """Page Frigate events in [now - lookback, now] and enqueue each one.
-        Returns the number enqueued. Raises FrigateUnavailable.
+        """Page Frigate events in [now - lookback, now] and enqueue each one
+        (blocking, never dropping).
+
+        Paging: next ``before`` = oldest ``start_time`` on the page + 1 ms, so
+        boundary ties are re-fetched. IDs are de-duplicated within the run. A
+        full page with no new IDs is retried with a doubled ``limit`` (cap
+        1000), then the run fails. Returns the number enqueued.
+
+        Raises:
+            FrigateUnavailable: Frigate unreachable or the login was refused.
+            ReconcileError: the tie cap was hit or the enqueue deadline passed.
         """
         ...
 
@@ -235,10 +265,16 @@ class HealthSnapshot:
     last_reconciliation_at: datetime | None
     reconciliation_status: Literal["ok", "failed", "never"]
     queue_depth: int
+    oldest_pending_age_s: float | None  # None when the queue is empty
+    consecutive_give_ups: int  # reset to 0 by any successful delivery
     counters: dict[str, int]
 
     def is_healthy(self, now: datetime) -> bool:
-        """False if MQTT has been disconnected for more than 60 s, or the last two
-        catch-up runs failed. An absence of events is never unhealthy.
+        """False if any of these holds: MQTT disconnected for more than 60 s;
+        the last two catch-up runs failed; ``consecutive_give_ups >= 3``;
+        ``oldest_pending_age_s > 180``.
+
+        The two delivery conditions need pending or attempted work, so a quiet
+        site (empty queue, no attempts) is never unhealthy.
         """
         ...

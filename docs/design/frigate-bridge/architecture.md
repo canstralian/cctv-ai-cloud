@@ -21,7 +21,7 @@ supersedes: revision 1 (same file, commit 4ffdc29)
 | F2: a dropped `end` is never repaired | [ADR 0003](../../adr/0003-mqtt-fast-path-frigate-reconciliation.md): periodic and on-reconnect **catch-up** from Frigate's events API, using the same idempotent upsert |
 | F3: retrying inside the MQTT callback | Receiving and delivering are split by a bounded queue. The MQTT thread only parses and enqueues. A broker-wide in-flight limit is no longer used |
 | F4: update filter drops zone changes | **Filter removed.** Frigate only publishes on a better snapshot or a zone change (verified), so every message is forwarded |
-| F5: startup check needs a scope the bridge lacks | Two credentials: a Frigate *viewer* login for reads, and an API key that can only *write* events. The bridge doesn't read the API's camera registry at all |
+| F5: startup check needs a scope the bridge lacks | Two credentials: a Frigate *viewer* login for reads, and an API key that can only *ingest* `source=frigate` events. The bridge doesn't read the API's camera registry at all |
 | F6: any key can write any source | ADR 0001 amended: each API key is bound to the sources it may write. A mismatch returns 403 |
 | F7: broker trusts any publisher | Mosquitto per-user topic ACLs: only `frigate` may publish `frigate/#`, and the `bridge` user may only read |
 | F8: dead bridge looks like a quiet site | A bridge `/healthz` with the five health readings below, plus `last_ingest_at` per source in `/api/v1/stats` |
@@ -70,7 +70,7 @@ correct even when messages are lost**.
 - The bridge never touches the API's database, the API's file storage, or
   Frigate's filesystem. Everything goes over HTTP.
 - Least privilege: the bridge's credentials let it read from Frigate and
-  write `source=frigate` events to the API. Nothing else.
+  ingest `source=frigate` events into the API. Nothing else.
 - Failures are visible in a health signal, not only in logs.
 
 ### Soft
@@ -108,9 +108,14 @@ correct even when messages are lost**.
 - **One delivery worker.** That keeps per-event order: `new` → `update` →
   `end` for one ID is never reordered. Throughput is far above the
   assumption.
-- **Queue full:** the network thread **does not block**. It drops the
-  item, counts `queue_overflow`, and marks catch-up as needed. Keep-alive
-  is never at risk. The dropped item is repaired by the next catch-up.
+- **Queue full, MQTT side:** the network thread **does not block**. It
+  drops the item, counts `queue_overflow`, and marks catch-up as needed.
+  Keep-alive is never at risk; the next catch-up repairs the dropped item.
+- **Queue full, catch-up side:** catch-up runs on its own thread, so it
+  **blocks** on `put` until there's capacity (with the run's own deadline).
+  It never drops a record. If the deadline expires, the run ends as
+  `failed` and the next run starts from the top of the window. Catch-up
+  therefore can't discard the older records it exists to recover.
 - **Acknowledgement:** MQTT QoS 1 with manual ack after the worker finishes
   (success *or* giving up). If the bridge crashes, unacknowledged messages
   are redelivered on reconnect. Redelivery is harmless because the upsert
@@ -127,9 +132,23 @@ correct even when messages are lost**.
 | After a delivery gave up, or the queue overflowed | an early run, at most one per minute |
 
 A catch-up pages through `GET /api/events?after=…&before=…&limit=100
-&sort=date_desc`, using the oldest `start_time` seen as the next `before`,
-and enqueues every record. There's **no stored cursor**: the overlapping
-window is cheap because writes are idempotent. Events that started before
+&sort=date_desc`. Frigate filters `start_time < before` (strict) and orders
+only by `start_time` (verified, `frigate/api/event.py` v0.18.0), so records
+that share a boundary `start_time` need care:
+
+1. The next page's `before` is the oldest `start_time` on the page **plus a
+   small epsilon** (1 ms), so records tied at the boundary are fetched
+   again rather than skipped.
+2. Records are de-duplicated by `id` within the run, and each is enqueued
+   once.
+3. If a full page adds no new IDs (every record is tied at one
+   `start_time`), the run retries that page with `limit` doubled, up to
+   1,000. If it still adds nothing, the run ends as `failed` and the
+   failure is visible in health. It never loops forever, and never skips
+   silently.
+
+There's **no stored cursor**: the overlapping window is cheap because writes
+are idempotent. Events that started before
 the lookback window aren't repaired. That's a stated limit, set by
 `RECONCILE_LOOKBACK`.
 
@@ -139,14 +158,19 @@ Whenever the worker sees `has_snapshot = true`, it fetches
 `/api/events/{id}/snapshot.jpg` and sends a `PUT` to the API's
 thumbnail endpoint. It does this on the first message with a snapshot (so
 the live dashboard has an image), again on `end` (Frigate's final best
-snapshot), and during catch-up when the API row has no thumbnail.
+snapshot), and during catch-up when the stored thumbnail is not final:
+`has_snapshot` is true, and the upsert response says `has_thumbnail` is
+false, **or** the record has ended and `thumbnail_final` is false. That
+covers a live `end` whose snapshot fetch failed after an earlier, non-final
+thumbnail was stored. A thumbnail fetched for an ended record is uploaded
+with `?final=true`.
 
 ### What gets forwarded
 
 | Input | Action |
 |---|---|
 | MQTT `new` / `update` / `end` | Upsert. Fetch the thumbnail per the rule above |
-| Catch-up record | Upsert. Fetch the thumbnail if `has_snapshot` and the API row doesn't have one (the upsert response says so) |
+| Catch-up record | Upsert. Fetch the thumbnail if `has_snapshot` and the stored one is missing, or the record has ended and the stored one isn't final (the upsert response carries both flags) |
 | `false_positive: true` | Skip. Frigate normally doesn't publish these, but it's cheap to guard against |
 | Camera fails `CAMERA_ID_PATTERN` after `CAMERA_MAP` | Skip, `unmapped_camera` |
 | Label fails `LABEL_PATTERN` | Skip, `invalid_label` |
@@ -171,15 +195,18 @@ Two parsers (`parse_mqtt`, `parse_http`) produce the same
 ### API changes
 
 ```
-PUT    /api/v1/events/by-source/{source}/{external_id}              scope: write + source bound to key
+PUT    /api/v1/events/by-source/{source}/{external_id}              scope: ingest, key bound to {source}
          body: EventCreate minus thumbnail_path (that field is API-owned on this path)
-         201 created · 200 updated (same id) · 403 source not allowed for this key
+         merge rules: ADR 0001 (ended_at sticky, score max, terminal row frozen)
+         201 created · 200 updated (same id) · 403 not ingest / source not bound
          404 unknown camera · 409 camera_id/started_at changed · 422 validation
-         response: EventOut + has_thumbnail: bool
+         response: EventOut (incl. has_thumbnail, thumbnail_final)
 
-PUT    /api/v1/events/by-source/{source}/{external_id}/thumbnail    scope: write + source bound
+PUT    /api/v1/events/by-source/{source}/{external_id}/thumbnail[?final=true]
+                                                                    scope: ingest, key bound to {source}
          body: image/jpeg, ≤ THUMBNAIL_MAX_BYTES (default 512 KiB); magic bytes checked
-         204 stored (replaces any previous) · 404 event unknown · 413 too large · 415 not JPEG
+         204 stored · 204 ignored (non-final upload over a final one)
+         404 event unknown · 413 too large · 415 not JPEG
 
 GET    /api/v1/events/{id}/thumbnail                                scope: read
          200 image/jpeg · 404 none stored
@@ -188,9 +215,10 @@ GET    /api/v1/stats  gains  last_ingest_at: {source: datetime}
 ```
 
 `API_KEYS` grammar grows an optional fourth field: `name:secret:scopes:sources`,
-for example `frigate-bridge:sk_…:write:frigate`. A key with no sources field may
-write **no** `by-source` path. That's fail-closed; the existing `POST` is
-unaffected.
+for example `frigate-bridge:sk_…:ingest:frigate`. `ingest` is a separate scope
+and doesn't satisfy `write`, so the bridge key gets 403 on `POST
+/api/v1/events` and on every camera write. A key with no sources field can
+ingest **nothing**: fail-closed. Existing `read`/`write` keys are unaffected.
 
 ### Bridge
 
@@ -204,12 +232,21 @@ GET :8080/healthz   200 when healthy, 503 otherwise
     "last_reconciliation_at": ts|null,
     "reconciliation_status": "ok"|"failed"|"never",
     "queue_depth": int,
+    "oldest_pending_age_s": float|null,
+    "consecutive_give_ups": int,
     "counters": {created, updated, skipped_by_reason, gave_up, queue_overflow} }
-unhealthy = !mqtt_connected for > 60 s  OR  reconciliation_status == "failed" twice in a row
+unhealthy = !mqtt_connected for > 60 s
+         OR reconciliation_status == "failed" twice in a row
+         OR consecutive_give_ups >= 3            (deliveries are failing, not just slow)
+         OR oldest_pending_age_s > 180           (work is waiting and not draining)
 ```
 
-The compose health check calls `/healthz`. "No events" alone is never
-treated as unhealthy: a quiet site is legitimately quiet.
+The compose health check calls `/healthz`. The two delivery conditions only
+trigger when there **is** work: a quiet site has an empty queue
+(`oldest_pending_age_s` null) and no attempts, so it stays healthy. Any
+successful delivery resets `consecutive_give_ups` to 0. So with MQTT up and
+catch-up succeeding, an API that rejects or drops every `PUT` still turns the
+bridge unhealthy within about three delivery deadlines.
 
 ## Sequences
 
