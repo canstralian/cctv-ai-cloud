@@ -1,6 +1,6 @@
 # ADR 0001: Idempotent event upsert keyed by (source, external_id)
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-06). Refinements from review F6 (source-bound keys) and F9 (migration race) to be folded in at build time
 - **Date:** 2026-10-06
 - **Context doc:** [Frigate bridge architecture](../design/frigate-bridge/architecture.md)
 
